@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Berlin Bike Theft Visualizer</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #map { height: 60vh; z-index: 1; }
+        .drag-active { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm z-20">
+        <div>
+            <h1 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Berlin Bike Theft Radar
+            </h1>
+            <p class="text-xs text-slate-500 mt-1">Visualize 'Fahrraddiebstahl' CSV Data</p>
+        </div>
+        
+        <div class="flex items-center gap-4">
+            <div id="file-status" class="text-sm font-medium text-slate-400">No file loaded</div>
+            <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                Upload CSV
+                <input type="file" id="csvInput" accept=".csv" class="hidden" />
+            </label>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+        
+        <!-- Overlay for Drag & Drop -->
+        <div id="drop-zone" class="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center border-4 border-dashed border-slate-300 transition-all duration-200 opacity-0 pointer-events-none">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-blue-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <h2 class="text-2xl font-bold text-slate-700">Drop your CSV file here</h2>
+            <p class="text-slate-500 mt-2">Supports official Berlin Police 'Fahrraddiebstahl' data</p>
+        </div>
+
+        <!-- Map Section -->
+        <div class="flex-1 relative h-full min-h-[50vh]">
+            <div id="map" class="h-full w-full outline-none"></div>
+            
+            <!-- Map Legend/Stats Overlay -->
+            <div class="absolute bottom-6 left-6 bg-white/90 backdrop-blur rounded-lg shadow-lg p-4 z-[400] max-w-xs border border-slate-100 hidden" id="map-stats">
+                <h3 class="font-bold text-slate-800 text-sm mb-2">Current View Stats</h3>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="text-xs text-slate-500 uppercase tracking-wider">Total</div>
+                        <div class="text-xl font-bold text-blue-600" id="stat-count">-</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-slate-500 uppercase tracking-wider">Avg Value</div>
+                        <div class="text-xl font-bold text-emerald-600" id="stat-value">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar / Analytics -->
+        <div class="w-full lg:w-96 bg-white border-l border-slate-200 overflow-y-auto p-6 flex flex-col gap-8 shadow-xl z-10">
+            
+            <!-- Intro / Empty State -->
+            <div id="intro-text" class="text-center py-10">
+                <div class="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0121 18.382V7.618a1 1 0 01-.447-.894L15 7m0 13V7" />
+                    </svg>
+                </div>
+                <h3 class="text-lg font-bold text-slate-800">Ready to Visualize</h3>
+                <p class="text-sm text-slate-500 mt-2 leading-relaxed">
+                    Upload the official Berlin bike theft CSV file to see hotspots, analyze trends, and breakdown theft types.
+                </p>
+                <div class="mt-6 p-4 bg-yellow-50 rounded-lg text-left border border-yellow-100">
+                    <p class="text-xs text-yellow-800">
+                        <strong>Note:</strong> The dataset uses "LOR" codes instead of exact GPS. Points are mapped to districts and slightly scattered (jittered) to visualize density.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Charts Container (Hidden initially) -->
+            <div id="analytics-container" class="hidden flex flex-col gap-8">
+                
+                <!-- Chart 1: Time of Day -->
+                <div class="bg-white rounded-xl">
+                    <h3 class="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Theft by Hour of Day
+                    </h3>
+                    <div class="h-48 relative">
+                        <canvas id="timeChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 2: Bike Types -->
+                <div class="bg-white rounded-xl">
+                    <h3 class="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                        Bike Types
+                    </h3>
+                    <div class="h-48 relative">
+                        <canvas id="typeChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 3: Top Districts -->
+                <div class="bg-white rounded-xl">
+                    <h3 class="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        Top Districts
+                    </h3>
+                    <div class="h-48 relative">
+                        <canvas id="districtChart"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <!-- Libraries -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <script>
+        // --- Configuration ---
+        const BERLIN_CENTER = [52.5200, 13.4050];
+        
+        // Approximate centroids for Berlin districts (first 2 digits of LOR)
+        const DISTRICT_MAPPING = {
+            '01': { name: 'Mitte', lat: 52.5176, lng: 13.4023 },
+            '02': { name: 'Friedrichshain-Kreuzberg', lat: 52.5011, lng: 13.4446 },
+            '03': { name: 'Pankow', lat: 52.5976, lng: 13.4363 },
+            '04': { name: 'Charlottenburg-Wilmersdorf', lat: 52.5078, lng: 13.2647 },
+            '05': { name: 'Spandau', lat: 52.5352, lng: 13.1685 },
+            '06': { name: 'Steglitz-Zehlendorf', lat: 52.4285, lng: 13.2424 },
+            '07': { name: 'Tempelhof-Schöneberg', lat: 52.4406, lng: 13.3719 },
+            '08': { name: 'Neukölln', lat: 52.4552, lng: 13.4502 },
+            '09': { name: 'Treptow-Köpenick', lat: 52.4178, lng: 13.5855 },
+            '10': { name: 'Marzahn-Hellersdorf', lat: 52.5393, lng: 13.5844 },
+            '11': { name: 'Lichtenberg', lat: 52.5322, lng: 13.5005 },
+            '12': { name: 'Reinickendorf', lat: 52.5997, lng: 13.3056 }
+        };
+
+        // --- State ---
+        let map;
+        let markers;
+        let chartInstances = {};
+        let rawData = [];
+
+        // --- Initialization ---
+        function init() {
+            // 1. Initialize Map
+            map = L.map('map').setView(BERLIN_CENTER, 11);
+            
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+
+            markers = L.markerClusterGroup({
+                chunkedLoading: true,
+                maxClusterRadius: 50,
+                spiderfyOnMaxZoom: true
+            });
+            map.addLayer(markers);
+
+            // 2. Setup Drag & Drop
+            setupDragAndDrop();
+        }
+
+        // --- Logic ---
+
+        // Adds random jitter to coordinates so points don't stack perfectly
+        // Spread factor is approx 1-2km to simulate distribution within the district
+        function getJitteredCoords(lat, lng) {
+            const spread = 0.025; // Roughly 2-3km spread
+            return {
+                lat: lat + (Math.random() - 0.5) * spread,
+                lng: lng + (Math.random() - 0.5) * spread
+            };
+        }
+
+        function parseData(file) {
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                encoding: "ISO-8859-1", // Common for German CSVs
+                complete: function(results) {
+                    processRows(results.data);
+                    document.getElementById('file-status').innerText = `${results.data.length.toLocaleString()} records loaded`;
+                    document.getElementById('file-status').className = "text-sm font-medium text-emerald-600";
+                    document.getElementById('intro-text').classList.add('hidden');
+                    document.getElementById('analytics-container').classList.remove('hidden');
+                    document.getElementById('map-stats').classList.remove('hidden');
+                },
+                error: function(err) {
+                    alert("Error parsing CSV: " + err.message);
+                }
+            });
+        }
+
+        function processRows(rows) {
+            markers.clearLayers();
+            const validPoints = [];
+            
+            // Analytics Data Containers
+            const hours = new Array(24).fill(0);
+            const types = {};
+            const districts = {};
+            let totalValue = 0;
+            let valueCount = 0;
+
+            rows.forEach(row => {
+                // Expected columns: LOR, TATZEIT_ANFANG_STUNDE, SCHADENSHOEHE, ART_DES_FAHRRADS
+                const lor = row.LOR;
+                if (!lor || lor.length < 2) return;
+
+                const districtCode = lor.substring(0, 2);
+                const districtData = DISTRICT_MAPPING[districtCode];
+
+                if (districtData) {
+                    // 1. Map Logic
+                    const coords = getJitteredCoords(districtData.lat, districtData.lng);
+                    const marker = L.circleMarker([coords.lat, coords.lng], {
+                        radius: 5,
+                        fillColor: "#3b82f6",
+                        color: "#fff",
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.6
+                    });
+                    
+                    // Tooltip
+                    const value = row.SCHADENSHOEHE ? row.SCHADENSHOEHE + '€' : 'N/A';
+                    const type = row.ART_DES_FAHRRADS || 'Unknown';
+                    marker.bindPopup(`
+                        <div class="text-sm">
+                            <strong class="block text-slate-800 mb-1">${type}</strong>
+                            <span class="text-slate-500">Value:</span> ${value}<br>
+                            <span class="text-slate-500">District:</span> ${districtData.name}<br>
+                            <span class="text-slate-500">Date:</span> ${row.TATZEIT_ANFANG_DATUM || '-'}
+                        </div>
+                    `);
+                    
+                    markers.addLayer(marker);
+                    validPoints.push(marker);
+
+                    // 2. Analytics Logic
+                    
+                    // Hours
+                    const hour = parseInt(row.TATZEIT_ANFANG_STUNDE);
+                    if (!isNaN(hour) && hour >= 0 && hour < 24) {
+                        hours[hour]++;
+                    }
+
+                    // Types
+                    const bikeType = row.ART_DES_FAHRRADS || "Unknown";
+                    types[bikeType] = (types[bikeType] || 0) + 1;
+
+                    // Districts
+                    districts[districtData.name] = (districts[districtData.name] || 0) + 1;
+
+                    // Value
+                    const val = parseFloat(row.SCHADENSHOEHE);
+                    if (!isNaN(val)) {
+                        totalValue += val;
+                        valueCount++;
+                    }
+                }
+            });
+
+            if (validPoints.length > 0) {
+                map.fitBounds(markers.getBounds());
+            }
+
+            // Update Stats UI
+            document.getElementById('stat-count').innerText = validPoints.length.toLocaleString();
+            const avgVal = valueCount > 0 ? Math.round(totalValue / valueCount) : 0;
+            document.getElementById('stat-value').innerText = avgVal + '€';
+
+            updateCharts(hours, types, districts);
+        }
+
+        function updateCharts(hoursData, typesData, districtsData) {
+            // Helper to generate fresh options for each chart to avoid shared reference bugs
+            const getChartOptions = (isHorizontal = false) => ({
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: isHorizontal ? 'y' : 'x',
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { 
+                        grid: { display: false }, 
+                        ticks: { font: { size: 10 } },
+                        beginAtZero: true 
+                    },
+                    y: { 
+                        grid: { borderDash: [2, 4] }, 
+                        ticks: { font: { size: 10 } },
+                        beginAtZero: true
+                    }
+                }
+            });
+
+            // 1. Time Chart
+            if (chartInstances.time) chartInstances.time.destroy();
+            chartInstances.time = new Chart(document.getElementById('timeChart'), {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+                    datasets: [{
+                        label: 'Thefts',
+                        data: hoursData,
+                        borderColor: '#3b82f6',
+                        backgroundColor: '#3b82f620',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2
+                    }]
+                },
+                options: getChartOptions(false)
+            });
+
+            // 2. Type Chart (Sort top 5)
+            const sortedTypes = Object.entries(typesData).sort((a,b) => b[1] - a[1]).slice(0, 5);
+            if (chartInstances.type) chartInstances.type.destroy();
+            chartInstances.type = new Chart(document.getElementById('typeChart'), {
+                type: 'bar',
+                data: {
+                    labels: sortedTypes.map(x => x[0]),
+                    datasets: [{
+                        label: 'Count',
+                        data: sortedTypes.map(x => x[1]),
+                        backgroundColor: '#10b981',
+                        borderRadius: 4
+                    }]
+                },
+                options: getChartOptions(true)
+            });
+
+            // 3. District Chart (Sort top 5)
+            const sortedDistricts = Object.entries(districtsData).sort((a,b) => b[1] - a[1]).slice(0, 5);
+            if (chartInstances.district) chartInstances.district.destroy();
+            chartInstances.district = new Chart(document.getElementById('districtChart'), {
+                type: 'bar',
+                data: {
+                    labels: sortedDistricts.map(x => x[0]),
+                    datasets: [{
+                        label: 'Thefts',
+                        data: sortedDistricts.map(x => x[1]),
+                        backgroundColor: '#f59e0b',
+                        borderRadius: 4
+                    }]
+                },
+                options: getChartOptions(true)
+            });
+        }
+
+        // --- Drag & Drop Handlers ---
+        function setupDragAndDrop() {
+            const dropZone = document.getElementById('drop-zone');
+            const fileInput = document.getElementById('csvInput');
+            const body = document.body;
+
+            // Prevent default drag behaviors
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                body.addEventListener(eventName, preventDefaults, false);
+            });
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            // Highlight drop zone
+            ['dragenter', 'dragover'].forEach(eventName => {
+                body.addEventListener(eventName, () => {
+                    dropZone.classList.remove('opacity-0', 'pointer-events-none');
+                    dropZone.classList.add('opacity-100', 'pointer-events-auto');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                body.addEventListener(eventName, () => {
+                    // Only hide if we aren't dragging over the dropzone itself (for leave)
+                    // but for simplicity, we just check if it's the drop event or explicit leave
+                     dropZone.classList.add('opacity-0', 'pointer-events-none');
+                     dropZone.classList.remove('opacity-100', 'pointer-events-auto');
+                }, false);
+            });
+
+            // Handle dropped files
+            body.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                handleFiles(files);
+            }, false);
+
+            // Handle manual input
+            fileInput.addEventListener('change', function(e) {
+                handleFiles(this.files);
+            });
+        }
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                parseData(files[0]);
+            }
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
