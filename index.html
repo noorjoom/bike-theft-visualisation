@@ -39,28 +39,25 @@
                 </svg>
                 Berlin Bike Theft Radar
             </h1>
-            <p class="text-xs text-slate-500 mt-1">Visualize 'Fahrraddiebstahl' CSV Data</p>
+            <p class="text-xs text-slate-500 mt-1">Visualize 'Fahrraddiebstahl' Data from Database</p>
         </div>
         
         <div class="flex items-center gap-4">
-            <div id="file-status" class="text-sm font-medium text-slate-400">No file loaded</div>
-            <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-                Upload CSV
-                <input type="file" id="csvInput" accept=".csv" class="hidden" />
-            </label>
+            <div id="file-status" class="text-sm font-medium text-slate-400">Ready to load data</div>
+            <button id="loadDataBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                Load Data
+            </button>
         </div>
     </header>
 
     <!-- Main Content -->
     <main class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
         
-        <!-- Overlay for Drag & Drop -->
-        <div id="drop-zone" class="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center border-4 border-dashed border-slate-300 transition-all duration-200 opacity-0 pointer-events-none">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-blue-500 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            <h2 class="text-2xl font-bold text-slate-700">Drop your CSV file here</h2>
-            <p class="text-slate-500 mt-2">Supports official Berlin Police 'Fahrraddiebstahl' data</p>
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center transition-all duration-200 opacity-0 pointer-events-none">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+            <h2 class="text-2xl font-bold text-slate-700">Loading data...</h2>
+            <p class="text-slate-500 mt-2">Fetching from database</p>
         </div>
 
         <!-- Map Section -->
@@ -95,7 +92,7 @@
                 </div>
                 <h3 class="text-lg font-bold text-slate-800">Ready to Visualize</h3>
                 <p class="text-sm text-slate-500 mt-2 leading-relaxed">
-                    Upload the official Berlin bike theft CSV file to see hotspots, analyze trends, and breakdown theft types.
+                    Click "Load Data" to fetch bike theft data from the database and visualize hotspots, analyze trends, and breakdown theft types.
                 </p>
                 <div class="mt-6 p-4 bg-yellow-50 rounded-lg text-left border border-yellow-100">
                     <p class="text-xs text-yellow-800">
@@ -148,7 +145,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
     <script>
         // --- Configuration ---
@@ -169,6 +165,9 @@
             '11': { name: 'Lichtenberg', lat: 52.5322, lng: 13.5005 },
             '12': { name: 'Reinickendorf', lat: 52.5997, lng: 13.3056 }
         };
+
+        // --- Configuration ---
+        const API_BASE_URL = window.location.origin; // Use same origin, or set to 'http://localhost:3000' if needed
 
         // --- State ---
         let map;
@@ -194,8 +193,8 @@
             });
             map.addLayer(markers);
 
-            // 2. Setup Drag & Drop
-            setupDragAndDrop();
+            // 2. Setup Event Listeners
+            setupEventListeners();
         }
 
         // --- Logic ---
@@ -210,23 +209,46 @@
             };
         }
 
-        function parseData(file) {
-            Papa.parse(file, {
-                header: true,
-                skipEmptyLines: true,
-                encoding: "ISO-8859-1", // Common for German CSVs
-                complete: function(results) {
-                    processRows(results.data);
-                    document.getElementById('file-status').innerText = `${results.data.length.toLocaleString()} records loaded`;
-                    document.getElementById('file-status').className = "text-sm font-medium text-emerald-600";
+        async function loadData() {
+            const loadingOverlay = document.getElementById('loading-overlay');
+            const statusEl = document.getElementById('file-status');
+            
+            try {
+                // Show loading state
+                loadingOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                loadingOverlay.classList.add('opacity-100', 'pointer-events-auto');
+                statusEl.innerText = 'Loading...';
+                statusEl.className = "text-sm font-medium text-blue-600";
+
+                // Fetch data from API
+                const response = await fetch(`${API_BASE_URL}/api/thefts?limit=50000`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                const data = result.data;
+                
+                if (data && data.length > 0) {
+                    processRows(data);
+                    statusEl.innerText = `${result.pagination.total.toLocaleString()} records loaded`;
+                    statusEl.className = "text-sm font-medium text-emerald-600";
                     document.getElementById('intro-text').classList.add('hidden');
                     document.getElementById('analytics-container').classList.remove('hidden');
                     document.getElementById('map-stats').classList.remove('hidden');
-                },
-                error: function(err) {
-                    alert("Error parsing CSV: " + err.message);
+                } else {
+                    throw new Error('No data received from server');
                 }
-            });
+            } catch (error) {
+                console.error('Error loading data:', error);
+                statusEl.innerText = 'Error loading data';
+                statusEl.className = "text-sm font-medium text-red-600";
+                alert('Error loading data: ' + error.message + '\n\nMake sure the server is running and the database is set up.');
+            } finally {
+                // Hide loading state
+                loadingOverlay.classList.add('opacity-0', 'pointer-events-none');
+                loadingOverlay.classList.remove('opacity-100', 'pointer-events-auto');
+            }
         }
 
         function processRows(rows) {
@@ -386,55 +408,11 @@
             });
         }
 
-        // --- Drag & Drop Handlers ---
-        function setupDragAndDrop() {
-            const dropZone = document.getElementById('drop-zone');
-            const fileInput = document.getElementById('csvInput');
-            const body = document.body;
-
-            // Prevent default drag behaviors
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                body.addEventListener(eventName, preventDefaults, false);
-            });
-
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }
-
-            // Highlight drop zone
-            ['dragenter', 'dragover'].forEach(eventName => {
-                body.addEventListener(eventName, () => {
-                    dropZone.classList.remove('opacity-0', 'pointer-events-none');
-                    dropZone.classList.add('opacity-100', 'pointer-events-auto');
-                }, false);
-            });
-
-            ['dragleave', 'drop'].forEach(eventName => {
-                body.addEventListener(eventName, () => {
-                    // Only hide if we aren't dragging over the dropzone itself (for leave)
-                    // but for simplicity, we just check if it's the drop event or explicit leave
-                     dropZone.classList.add('opacity-0', 'pointer-events-none');
-                     dropZone.classList.remove('opacity-100', 'pointer-events-auto');
-                }, false);
-            });
-
-            // Handle dropped files
-            body.addEventListener('drop', (e) => {
-                const dt = e.dataTransfer;
-                const files = dt.files;
-                handleFiles(files);
-            }, false);
-
-            // Handle manual input
-            fileInput.addEventListener('change', function(e) {
-                handleFiles(this.files);
-            });
-        }
-
-        function handleFiles(files) {
-            if (files.length > 0) {
-                parseData(files[0]);
+        // --- Event Handlers ---
+        function setupEventListeners() {
+            const loadBtn = document.getElementById('loadDataBtn');
+            if (loadBtn) {
+                loadBtn.addEventListener('click', loadData);
             }
         }
 
